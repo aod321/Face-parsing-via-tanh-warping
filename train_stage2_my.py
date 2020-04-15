@@ -13,8 +13,8 @@ from dataset import Warped_HelenDataset
 from template import TemplateModel
 from tensorboardX import SummaryWriter
 from prefetch_generator import BackgroundGenerator
+from augmentation import Stage2DataAugmentation
 from tqdm import tqdm
-import pytorch_lightning as pl
 
 uuid = str(uid.uuid1())[0:8]
 print(uuid)
@@ -22,6 +22,7 @@ print(uuid)
 parser = argparse.ArgumentParser()
 parser.add_argument("--cuda", default=9, type=int, help="Which GPU to train.")
 parser.add_argument("--optim", default=0, type=int, help="Optimizer: 0: Adam, 1: SGD, 2:SGD with Nesterov")
+parser.add_argument("--datamore", default=1, type=int, help="Data Augmentation")
 parser.add_argument("--batch_size", default=16, type=int, help="Batch size to use during training.")
 parser.add_argument("--workers", default=10, type=int, help="Workers")
 parser.add_argument("--display_freq", default=8, type=int, help="Display frequency")
@@ -68,13 +69,22 @@ transforms_list = {
         ])
 }
 
-Dataset = {x: Warped_HelenDataset(root_dir=root_dir[x],
-                                  mode=x,
-                                  transform=transforms_list[x]
-                                  )
-           for x in ['train', 'val']
-           }
-
+Dataset = {'val': Warped_HelenDataset(root_dir=root_dir['val'],
+                                      mode='val',
+                                      transform=transforms_list['val']
+                                      )}
+if args.datamore:
+    # Stage 1 augmentation
+    stage1_augmentation = Stage2DataAugmentation(dataset=Warped_HelenDataset,
+                                                 root_dir=root_dir
+                                                 )
+    train_dataset = stage1_augmentation.get_dataset()
+else:
+    train_dataset = {'train': Warped_HelenDataset(root_dir=root_dir['train'],
+                                                  mode='train',
+                                                  transform=transforms_list['train']
+                                                  )}
+Dataset.update(train_dataset)
 dataloader = {x: DataLoaderX(Dataset[x], batch_size=args.batch_size,
                              shuffle=True, num_workers=args.workers)
               for x in ['train', 'val']
@@ -184,7 +194,8 @@ class TrainModel(TemplateModel):
             self.save_state(os.path.join(self.ckpt_dir, 'best.pth.tar'), False)
         self.save_state(os.path.join(self.ckpt_dir, '{}.pth.tar'.format(self.epoch)))
         self.writer.add_scalar('eval_error%s' % uuid, error_in + error_out, self.epoch)
-        print('epoch {}\t mean_error {:.3}\t best_error {:.3}'.format(self.epoch, error_in + error_out, self.best_error))
+        print(
+            'epoch {}\t mean_error {:.3}\t best_error {:.3}'.format(self.epoch, error_in + error_out, self.best_error))
         with torch.cuda.device(args.cuda):
             torch.cuda.empty_cache()
 

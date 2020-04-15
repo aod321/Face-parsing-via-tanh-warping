@@ -1,13 +1,8 @@
 from resfpn import resnet_fpn_backbone
 from collections import OrderedDict
 from torchvision.ops.roi_align import RoIAlign
-from torch.nn import SmoothL1Loss, CrossEntropyLoss
-from dataset import new_HelenDataset
 import torch
 import torch.nn as nn
-import numpy as np
-import torch.optim as optim
-from torch.utils.data import DataLoader
 
 
 def napply_mat_tensor(coords, matrix):
@@ -33,12 +28,6 @@ class Stage1(nn.Module):
         super(Stage1, self).__init__()
         self.backbone = BackBone()
         self.bbox_regress = ComponentRegress()
-        self.criterion = SmoothL1Loss()
-        self.optimizer = None
-        self.scheduler = None
-        self.train_data = None
-        self.val_data = None
-        self.test_data = None
 
     def forward(self, x):
         C, P = self.backbone(x)
@@ -54,7 +43,6 @@ class Hybird(nn.Module):
         self.roi_align = RoIAlign(output_size=(32, 32), spatial_scale=128. / 512., sampling_ratio=-1)
         self.inner_Module = inner_Module(num=4)
         self.outer_Seg = outer_Seg(n_class=11)
-        self.criterion = CrossEntropyLoss()
         self.load_from_checkpoint(hparam.pretrain_path, torch.device(f"cuda:{hparam.cuda}"))
 
     def forward(self, x):

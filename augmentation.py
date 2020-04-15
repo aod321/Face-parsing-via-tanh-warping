@@ -1,7 +1,6 @@
 from torch.utils.data import ConcatDataset
 from torchvision import transforms
-import torchvision.transforms.functional as TF
-from preprocess import ToTensor, GaussianNoise, RandomAffine
+from preprocess import ToTensor, GaussianNoise, RandomAffine, PrepareLabels
 
 
 class DataAugmentation(object):
@@ -104,34 +103,34 @@ class DataAugmentation(object):
 
         return enhaced_datasets
 
-from torch.utils.data import ConcatDataset
-from torchvision import transforms
-import torchvision.transforms.functional as TF
-from preprocess import ToTensor, GaussianNoise, RandomAffine
-
 
 class Stage2DataAugmentation(DataAugmentation):
 
     def set_transformers(self):
         self.transforms = {
             self.augmentation_name[0]: transforms.Compose([
+                PrepareLabels((128, 128)),
                 ToTensor()
             ]),
             self.augmentation_name[1]: transforms.Compose([
                 # Choose from tranforms_list randomly
                 transforms.RandomChoice(self.randomchoice['choice1']),
+                PrepareLabels((128, 128)),
                 ToTensor()
             ]),
             self.augmentation_name[2]: transforms.Compose([
                 transforms.RandomChoice(self.randomchoice['choice2']),
+                PrepareLabels((128, 128)),
                 ToTensor()
             ]),
             self.augmentation_name[3]: transforms.Compose([
                 transforms.RandomChoice(self.randomchoice['choice3']),
+                PrepareLabels((128, 128)),
                 ToTensor()
             ]),
             self.augmentation_name[4]: transforms.Compose([
                 transforms.RandomChoice(self.randomchoice['choice4']),
+                PrepareLabels((128, 128)),
                 ToTensor()
             ])
         }
