@@ -76,12 +76,12 @@ if __name__ == '__main__':
             full_path = os.path.join(outpath, x)
             os.makedirs(full_path, exist_ok=True)
 
-            # TF.to_pil_image(image[0]).save(os.path.join(full_path, name[0] + '_image.png'),
-            #                                format='PNG', compress_level=0)
-            #
-            # out_label = TF.to_pil_image(labels[0][0].numpy().astype(np.uint8), mode='L')
-            # out_label.save(os.path.join(full_path, name[0] + '_label.png'),
-            #                format='PNG', compress_level=0)
+            TF.to_pil_image(image[0]).save(os.path.join(full_path, name[0] + '_image.png'),
+                                           format='PNG', compress_level=0)
+
+            out_label = TF.to_pil_image(labels[0][0].numpy().astype(np.uint8), mode='L')
+            out_label.save(os.path.join(full_path, name[0] + '_label.png'),
+                           format='PNG', compress_level=0)
 
         with open(os.path.join(full_path, f'{x}.p'), 'wb') as fp:
             pickle.dump(saveDict, fp, protocol=pickle.HIGHEST_PROTOCOL)
