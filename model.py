@@ -42,14 +42,14 @@ class Hybird(nn.Module):
         self.bbox_regress = ComponentRegress()
         self.roi_align = RoIAlign(output_size=(32, 32), spatial_scale=128. / 512., sampling_ratio=-1)
         self.inner_Module = inner_Module(num=4)
-        self.outer_Seg = outer_Seg(n_class=11)
+        self.outer_Seg = outer_Seg(n_class=3)
         self.load_from_checkpoint(hparam.pretrain_path, torch.device(f"cuda:{hparam.cuda}"))
 
     def forward(self, x):
         C, P = self.backbone(x)
         bbox = self.bbox_regress(C['4'])
         """"" Mapping """
-        bbox = torch.tanh(bbox) * 256. - 256.
+        bbox = torch.tanh(bbox) * 256. + 256.
         """" Bbox Padding """
         # non-mouth
         bbox[:3] += bbox[:3] * 0.05
@@ -60,6 +60,7 @@ class Hybird(nn.Module):
         boxes = [bbox[:, i]
                  for i in range(4)]
         roi_preds = self.roi_align(input=P['2'], rois=boxes)
+
         # roi_preds Shape(4 * N, 256, 32, 32)
         assert roi_preds.shape == (roi_preds.shape[0], 256, 32, 32)
 
@@ -67,11 +68,12 @@ class Hybird(nn.Module):
         inner_pred = self.inner_Module(roi_preds)
         # inner_out is a OrderedDict
         # leye, reye, nose, mouth
-        # Each of them has Shape(N, 11, 128, 128)
+        # C=3,   C=3,  C=2,  C=4
+        # Each of them has Shape(N, C, 128, 128)
 
         """" Outer Pred  """
         outer_pred = self.outer_Seg(P['2'])
-        # outer Shape(N, 11, 128, 128)
+        # outer Shape(N, 256, 128, 128)
 
         return inner_pred, outer_pred
 
@@ -104,18 +106,19 @@ class outer_Seg(nn.Module):
 class inner_Module(nn.Module):
     def __init__(self, num):
         super(inner_Module, self).__init__()
-        self.segnets = nn.ModuleList([inner_Seg(11) for _ in range(num)])
+        class_list = [3, 3, 2, 4]
+        self.segnets = nn.ModuleList([inner_Seg(class_list[r]) for r in range(num)])
         self.names = ['leye', 'reye', 'nose', 'mouth']
         self.num = num
+        self.outputs = OrderedDict()
 
     def forward(self, x):
         # Input x Shape(4 * N, 256, 32, 32)
         x = x.view(self.num, -1, 256, 32, 32)
         # Shape(4, N, 256, 32, 32)
-        outputs = OrderedDict()
         for i in range(self.num):
-            outputs[self.names[i]] = self.segnets[i](x[i])
-        return outputs
+            self.outputs[self.names[i]] = self.segnets[i](x[i])
+        return self.outputs
 
 
 # Ouput Shape(N, n_class, 128, 128)
@@ -131,11 +134,11 @@ class inner_Seg(nn.Module):
         self.classifier = nn.Conv2d(256, n_class, kernel_size=1)
 
     def forward(self, x):
-        # x Shape(4 * N, 3, 32, 32)
+        # x Shape(N, 3, 32, 32)
         x = self.upsample(self.bn1(self.relu(self.conv1(x))))
         x = self.upsample(self.bn2(self.relu(self.conv2(x))))
         x = self.classifier(x)
-        # x Shape(4*N, 11, 128, 128)
+        # x Shape(N, C, 128, 128)
         return x
 
 

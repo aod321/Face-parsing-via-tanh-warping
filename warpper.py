@@ -5,7 +5,7 @@ import torch.optim as optim
 import numpy as np
 import os
 import uuid as uid
-from model import test_Stage1
+from model import Stage1
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from preprocess import Warping
@@ -18,6 +18,7 @@ from template import TemplateModel
 from tensorboardX import SummaryWriter
 from prefetch_generator import BackgroundGenerator
 from multiprocessing import set_start_method
+
 # try:
 #     set_start_method('spawn')
 # except RuntimeError:
@@ -57,7 +58,7 @@ Dataset = {x: new_HelenDataset(root_dir=root_dir[x],
            }
 
 dataloader = {x: DataLoader(Dataset[x], batch_size=1,
-                            shuffle=True, num_workers=0)
+                            shuffle=False, num_workers=0)
               for x in ['train', 'test', 'val']
               }
 outpath = "/home/yinzi/data4/warped/"
@@ -76,8 +77,9 @@ if __name__ == '__main__':
             full_path = os.path.join(outpath, x)
             os.makedirs(full_path, exist_ok=True)
 
-            TF.to_pil_image(image[0]).save(os.path.join(full_path, name[0] + '_image.png'),
-                                           format='PNG', compress_level=0)
+            out_img = TF.to_pil_image(image[0])
+            out_img.save(os.path.join(full_path, name[0] + '_image.png'),
+                         format='PNG', compress_level=0)
 
             out_label = TF.to_pil_image(labels[0][0].numpy().astype(np.uint8), mode='L')
             out_label.save(os.path.join(full_path, name[0] + '_label.png'),

@@ -20,19 +20,23 @@ uuid = str(uid.uuid1())[0:8]
 print(uuid)
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--cuda", default=9, type=int, help="Which GPU to train.")
+parser.add_argument("--cuda", default=1, type=int, help="Which GPU to train.")
 parser.add_argument("--optim", default=0, type=int, help="Optimizer: 0: Adam, 1: SGD, 2:SGD with Nesterov")
-parser.add_argument("--datamore", default=1, type=int, help="Data Augmentation")
-parser.add_argument("--batch_size", default=16, type=int, help="Batch size to use during training.")
+parser.add_argument("--datamore", default=0, type=int, help="Data Augmentation")
+parser.add_argument("--batch_size", default=25, type=int, help="Batch size to use during training.")
 parser.add_argument("--workers", default=10, type=int, help="Workers")
-parser.add_argument("--display_freq", default=8, type=int, help="Display frequency")
-parser.add_argument("--lr", default=0.01, type=float, help="Learning rate for optimizer")
+parser.add_argument("--display_freq", default=20, type=int, help="Display frequency")
+parser.add_argument("--lr_backbone", default=0.0001, type=float, help="Learning rate for optimizer")
+parser.add_argument("--lr_regress", default=0.0001, type=float, help="Learning rate for optimizer")
+parser.add_argument("--lr_inner", default=0.0001, type=float, help="Learning rate for optimizer")
+parser.add_argument("--lr_outter", default=0.0001, type=float, help="Learning rate for optimizer")
+parser.add_argument("--lr_base", default=0.0001, type=float, help="Learning rate for optimizer")
 parser.add_argument("--epochs", default=25, type=int, help="Number of epochs to train")
 parser.add_argument("--eval_per_epoch", default=1, type=int, help="eval_per_epoch ")
 parser.add_argument("--momentum", default=0.9, type=float, help="Momentum")
 parser.add_argument("--decay", default=0.01, type=float, help="Weight decay")
 parser.add_argument("--dampening", default=0, type=float, help="dampening for momentum")
-parser.add_argument('--pretrain_path', metavar='DIR', default="exp_stage1/checkpoints8625eff6/best.pth.tar", type=str,
+parser.add_argument('--pretrain_path', metavar='DIR', default="exp_stage1/checkpoints9d95997e/best.pth.tar", type=str,
                     help='path to save output')
 
 args = parser.parse_args()
@@ -104,15 +108,32 @@ class TrainModel(TemplateModel):
 
         self.device = torch.device("cuda:%d" % args.cuda if torch.cuda.is_available() else "cpu")
         self.model = Hybird(args).to(self.device)
+
+        # Set different learning rate for each modules.
+        backbone_params = list(map(id, self.model.backbone.parameters()))
+        boxregress_params = list(map(id, self.model.bbox_regress.parameters()))
+        inner_params = list(map(id, self.model.inner_Module.parameters()))
+        outter_params = list(map(id, self.model.outer_Seg.parameters()))
+        base_params = filter(lambda p: id(p) not in
+                                       (backbone_params + boxregress_params + inner_params + outter_params),
+                             self.model.parameters())
+        params = [
+            {'params': self.model.backbone.parameters(), 'lr': args.lr_backbone},
+            {'params': self.model.bbox_regress.parameters(), 'lr': args.lr_regress},
+            {'params': self.model.inner_Module.parameters(), 'lr': args.lr_inner},
+            {'params': self.model.outer_Seg.parameters(), 'lr': args.lr_outter},
+            {'params': base_params, 'lr': args.lr_base}
+        ]
+
         if args.optim == 0:
-            self.optimizer = optim.Adam(self.model.parameters(), self.args.lr)
+            self.optimizer = optim.Adam(params)
         elif args.optim == 1:
-            self.optimizer = optim.SGD(self.model.parameters(), self.args.lr,
+            self.optimizer = optim.SGD(params,
                                        momentum=self.args.momentum, dampening=self.args.dampening,
                                        weight_decay=self.args.decay, nesterov=False)
         elif args.optim == 2:
-            self.optimizer = optim.SGD(self.model.parameters(), self.args.lr,
-                                       momentum=self.args.momentu, dampening=self.args.dampening,
+            self.optimizer = optim.SGD(params,
+                                       momentum=self.args.momentum, dampening=self.args.dampening,
                                        weight_decay=self.args.decay, nesterov=True)
 
         self.criterion = nn.CrossEntropyLoss()
@@ -132,12 +153,10 @@ class TrainModel(TemplateModel):
         outer_label, inner_label = labels['outer'], labels['inner']
         in_pred, out_pred = self.model(image)
         outer_label = outer_label.squeeze(1).to(self.device)
-        assert outer_label.shape == (image.shape[0], 128, 128)
-        assert out_pred.shape == (image.shape[0], 11, 128, 128)
         loss_out = self.criterion(out_pred, outer_label.long())
         loss_in = []
         for i, x in enumerate(['leye', 'reye', 'nose', 'mouth']):
-            loss_in.append(self.criterion(in_pred[x], inner_label[i].squeeze(1).to(self.device).long()))
+            loss_in.append(self.criterion(in_pred[x], inner_label[:, i].to(self.device).long()))
         loss_in = torch.mean(torch.stack(loss_in))
         return loss_in, loss_out
 
@@ -149,16 +168,11 @@ class TrainModel(TemplateModel):
             outer_label, inner_label = labels['outer'], labels['inner']
             outer_label = outer_label.squeeze(1).to(self.device)
             in_pred, out_pred = self.model(image)
-
-            assert outer_label.shape == (image.shape[0], 128, 128)
-            assert out_pred.shape == (image.shape[0], 11, 128, 128)
-
             loss_out_list.append(self.criterion(out_pred, outer_label.long()).item())
             loss_in = []
             for i, x in enumerate(['leye', 'reye', 'nose', 'mouth']):
-                loss_in.append(self.criterion(in_pred[x], inner_label[i].squeeze(1).to(self.device).long()).item())
-            loss_in = np.mean(loss_in)
-            loss_in_list.append(loss_in)
+                loss_in.append(self.criterion(in_pred[x], inner_label[:, i].to(self.device).long()).item())
+            loss_in_list.append(np.mean(loss_in))
         mean_loss_in_error = np.mean(loss_in_list)
         mean_loss_out_error = np.mean(loss_out_list)
         return mean_loss_in_error, mean_loss_out_error
@@ -177,8 +191,8 @@ class TrainModel(TemplateModel):
             if self.step % self.display_freq == 0:
                 self.writer.add_scalar('loss_in_train_%s' % uuid, loss_in.item(), self.step)
                 self.writer.add_scalar('loss_out_train_%s' % uuid, loss_out.item(), self.step)
-                print('epoch {}\tstep {}\tloss_in {:.3}\tloss_out{:.3}'.format(self.epoch, self.step,
-                                                                               loss_in.item(), loss_out.item()))
+                print('epoch {}\tstep {}\tloss_in{:.3}\tloss_out{:.3}'.format(self.epoch, self.step,
+                                                                              loss_in.item(), loss_out.item()))
         with torch.cuda.device(args.cuda):
             torch.cuda.empty_cache()
 
@@ -190,12 +204,13 @@ class TrainModel(TemplateModel):
             os.makedirs(self.ckpt_dir)
 
         if error_in + error_out < self.best_error:
-            self.best_error = error_in + error_out
+            self.best_error = error_out + error_in
             self.save_state(os.path.join(self.ckpt_dir, 'best.pth.tar'), False)
         self.save_state(os.path.join(self.ckpt_dir, '{}.pth.tar'.format(self.epoch)))
         self.writer.add_scalar('eval_error%s' % uuid, error_in + error_out, self.epoch)
         print(
-            'epoch {}\t mean_error {:.3}\t best_error {:.3}'.format(self.epoch, error_in + error_out, self.best_error))
+            'epoch {}\t error_in {:.3} error_out {:.3} best_error {:.3}'.format(self.epoch, error_in, error_out,
+                                                                                self.best_error))
         with torch.cuda.device(args.cuda):
             torch.cuda.empty_cache()
 

@@ -4,9 +4,8 @@ import torch.nn.functional as F
 import torchvision.transforms.functional as TF
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, ImageDraw
 import cv2
-import matplotlib.pyplot as plt
 from skimage.util import random_noise
 from collections import OrderedDict
 
@@ -68,12 +67,13 @@ class Warping(transforms.Resize):
         image, labels = sample['image'], sample['labels']
         # labels Shape(H, W)
         boxes = labels2boxes(np.array(labels))
-        # bbox format (upper_left_x, upper_left_y, down_right_x, down_right_y)
+        # bbox format (upper_left_x, uppdjsfl;jldsjf;sakdlfer_left_y, down_right_x, down_right_y)
         # Shape(4, 4)
         self.warp_class = FastTanhWarping(boxes, self.size, self.device)
         # new_boxes = self._box_convert(boxes)
-        warped_image = self.warp_class(image)
-        warped_labels = np.array(self.warp_class(labels), dtype=np.float32, copy=False)
+        warped_image = self.warp_class.warp(image=image, output_size=self.size)
+        warped_labels = np.array(self.warp_class.warp(labels, mode='nearest', output_size=self.size),
+                                 dtype=np.float32, copy=False)
         warp_boxes = self._box_warp(boxes)
 
         sample = {'image': TF.to_tensor(warped_image),
@@ -105,27 +105,6 @@ class Warping(transforms.Resize):
         return new_boxes
 
 
-# class SimilarityTransform_tensor(trans.SimilarityTransform):
-#     def __init__(self, matrix=None, scale=None, rotation=None, translation=None, device=None):
-#         super(SimilarityTransform_tensor, self).__init__(matrix, scale, rotation, translation)
-#         self.device = device
-#
-#     # overidee _apply_mat
-#     def _apply_mat(self, coords, matrix):
-#         matrix_tensor = torch.from_numpy(matrix.astype(np.float32)).to(self.device)
-#         if isinstance(coords, type(matrix_tensor)):
-#             coords = coords.type_as(matrix_tensor)
-#         else:
-#             coords = torch.from_numpy(np.array(coords, copy=False, ndmin=2))
-#             coords = coords.to(self.device)
-#         x, y = torch.transpose(coords, 0, 1)
-#         src = torch.stack([x, y, torch.ones_like(x)], dim=0)
-#         dst = src.T @ matrix_tensor.T
-#         dst[dst[:, 2] == 0, 2] = np.finfo(float).eps
-#         dst[:, :2] /= dst[:, 2:3]
-#         return dst[:, :2]
-
-
 class FastTanhWarping(object):
     """
         Fast Tanh Warping implement, support CUDA.
@@ -141,16 +120,16 @@ class FastTanhWarping(object):
         self.device = device
 
     def __call__(self, image):
-        warped_image = self.warp(image, self.size)
+        warped_image = self.warp(image, output_size=self.size)
         return warped_image
 
-    def warp(self, image, output_size=None):
+    def warp(self, image, mode='bilinear', output_size=None):
         if output_size is None:
             output_size = np.array(image).shape
         corrds = self._get_coords(output_size, mode='warp')
         grid = self._coords2grid(corrds, np.array(image).shape)
         warped_image = F.grid_sample(TF.to_tensor(image).unsqueeze(0).to(self.device),
-                                     grid, align_corners=True)
+                                     grid, mode=mode, align_corners=True)
         output = TF.to_pil_image(warped_image[0].cpu())
         return output
 
@@ -301,31 +280,41 @@ class PrepareLabels(object):
         warp_boxes = np.array(sample['warp_boxes'] * 256. + 256.)
 
         np_label = np.array(labels)
-        outter_labels = np.zeros(np_label.shape, dtype=np.float32)
+        outter_labels = np.zeros(np_label.shape, dtype=np.uint8)
         outter_labels[np_label == 1] = 1
-        outter_labels[np_label == 10] = 10
+        outter_labels[np_label == 10] = 2
         outter_labels = TF.to_pil_image(outter_labels)
         outter_labels = TF.resize(img=outter_labels, size=self.size, interpolation=Image.NEAREST)
 
-        inner_labels = np.zeros(np_label.shape, dtype=np.float32)
-        inner_labels[(np_label > 1) * (np_label < 10)] = np_label[(np_label > 1) * (np_label < 10)]
-        inner_labels = TF.to_pil_image(inner_labels)
         inner_outs = []
         # Cropping
         for i in range(4):
             cen_x = np.floor((warp_boxes[i][0] + warp_boxes[i][2]) * 0.5)
             cen_y = np.floor((warp_boxes[i][1] + warp_boxes[i][3]) * 0.5)
-            inner_outs.append(np.array(TF.crop(img=inner_labels, top=cen_x - 64,
-                                               left=cen_y - 64, width=128, height=128), dtype=np.float32)
+            inner_outs.append(np.array(TF.crop(img=labels, top=cen_y - 64,
+                                               left=cen_x - 64, width=128, height=128), dtype=np.uint8)
                               )
         # LEye
-        inner_outs[0] = TF.to_tensor(np.where((inner_outs[0] == 2) + (inner_outs[0] == 4), inner_outs[0], 0))
+        inner_outs[0][(inner_outs[0] != 4) * (inner_outs[0] != 2)] = 0
+        inner_outs[0][inner_outs[0] == 2] = 1
+        inner_outs[0][inner_outs[0] == 4] = 2
         # REye
-        inner_outs[1] = TF.to_tensor(np.where((inner_outs[1] == 3) + (inner_outs[1] == 5), inner_outs[1], 0))
+        inner_outs[1][(inner_outs[1] != 3) * (inner_outs[1] != 5)] = 0
+        inner_outs[1][inner_outs[1] == 3] = 1
+        inner_outs[1][inner_outs[1] == 5] = 2
         # Nose
-        inner_outs[2] = TF.to_tensor(np.where((inner_outs[2] == 6), inner_outs[2], 0))
+        inner_outs[2][inner_outs[2] != 6] = 0
+        inner_outs[2][inner_outs[2] == 6] = 1
         # Mouth
-        inner_outs[3] = TF.to_tensor(np.where((inner_outs[3] > 6) * (inner_outs[3] < 10), inner_outs[3], 0))
+        mouth_out = np.zeros(inner_outs[3].shape)
+        mouth_out[inner_outs[3] == 7] = 1
+        mouth_out[inner_outs[3] == 8] = 2
+        mouth_out[inner_outs[3] == 9] = 3
+        inner_outs[3] = mouth_out
+
+        inner_outs = [torch.from_numpy(inner_outs[r].astype(np.float32))
+                      for r in range(4)]
+        inner_outs = torch.stack(inner_outs)
 
         new_labels = {'outer': TF.to_tensor(np.array(outter_labels, dtype=np.float32)),
                       'inner': inner_outs}
